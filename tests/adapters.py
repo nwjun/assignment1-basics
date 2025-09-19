@@ -591,8 +591,5 @@ def run_train_bpe(
     """
     from cs336_basics.tokenization.bpe import BPETokenizer
 
-    with open(input_path, "r", encoding="utf-8") as f:
-        all_text = f.read()
-
     bpe_tokenizer = BPETokenizer(special_tokens)
-    return bpe_tokenizer.train(all_text, vocab_size)
+    return bpe_tokenizer.train(vocab_size, input_path=input_path)
