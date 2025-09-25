@@ -126,20 +126,28 @@ class BPETokenizer:
                 idx_freq[idx_pair] += occ
         return idx_freq
 
-    def _preprocessing(self, corpus: str):
+    def _preprocessing(self, corpus: str, remain_special_tokens=False):
         """
         Preprocesses the input corpus by splitting it into chunks based on special tokens.
 
         Args:
             corpus (str): The input text to be preprocessed.
+            remain_special_tokens (bool): If True, special tokens are retained in the output chunks.
+                                          If False, special tokens are used as delimiters and not included
+                                          in the output chunks.
 
         Returns:
             list: A list of text chunks split by the special tokens. If no special tokens
                   are defined, the entire corpus is returned as a single chunk.
         """
-        if len(self.special_tokens) > 0:
-            delimeter = "|".join(re.escape(tok) for tok in self.special_tokens)
-            chunks = re.split(delimeter, corpus)
+        if self.special_tokens:
+            sorted_tokens = sorted(self.special_tokens, key=lambda x: (-len(x), x))
+            delimiter = "|".join(re.escape(tok) for tok in sorted_tokens)
+
+            if remain_special_tokens:
+                delimiter = re.compile(f"({delimiter})")
+
+            chunks = re.split(delimiter, corpus)
         else:
             # solve the case where no special_tokens and word will be splitted into single char
             chunks = [corpus]
@@ -235,8 +243,13 @@ class BPETokenizer:
         """
         Encode an input text into a sequence of token IDs.
         """
+        span_cache: Dict[str, List[int]] = {}
+
         def encode_span(text: str) -> List[int]:
             """Encode a span of text that doesn't contain special tokens."""
+            if text in span_cache:
+                return span_cache[text]
+
             # Convert text to UTF-8 bytes
             utf8_bytes = text.encode("utf-8")
 
@@ -270,6 +283,7 @@ class BPETokenizer:
                 new_token_id = byte2idx[merged_bytes]
                 ids = self.merge(ids, best_pair, new_token_id)
 
+            span_cache[text] = ids
             return ids
 
         # Create proper byte-to-token-id mapping
@@ -283,15 +297,9 @@ class BPETokenizer:
             rank[(idx1, idx2)] = i
 
         # Handle special tokens by splitting text first
-        if self.special_tokens:
-            delimiter = "|".join(re.escape(tok) for tok in self.special_tokens)
-            splitter = re.compile(f"({delimiter})")
-            chunks = splitter.split(text)
-        else:
-            chunks = [text]
+        chunks = self._preprocessing(text, remain_special_tokens=True)
 
         encoded_list: List[int] = []
-
         for chunk in chunks:
             if self.special_tokens and chunk in self.special_tokens:
                 # Handle special tokens
