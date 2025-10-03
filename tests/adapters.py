@@ -251,6 +251,50 @@ def run_rope(
     return rope(in_query_or_key, token_positions)
 
 
+def _remap_key(k: str) -> str:
+    import re
+
+    SEP = r"(^|\.)"
+
+    # attn.{q,k,v}_proj.weight -> attn.linear_{q,k,v}.weight
+    k = re.sub(fr"{SEP}attn\.([qkv])_proj\.weight$", r"\1attn.linear_\2.weight", k)
+    # attn.output_proj.weight -> attn.linear_o.weight
+    k = re.sub(fr"{SEP}attn\.output_proj\.weight$", r"\1attn.linear_o.weight", k)
+
+    # ffn.w1/w3/w2.weight -> ffn.glu.linear_1/linear_2/output_proj.weight
+    k = re.sub(fr"{SEP}ffn\.w1\.weight$", r"\1ffn.glu.linear_1.weight", k)
+    k = re.sub(fr"{SEP}ffn\.w3\.weight$", r"\1ffn.glu.linear_2.weight", k)
+    k = re.sub(fr"{SEP}ffn\.w2\.weight$", r"\1ffn.output_proj.weight", k)
+
+    # ln1.weight / ln2.weight -> ln1.gain / ln2.gain
+    k = re.sub(fr"{SEP}ln([12])\.weight$", r"\1ln\2.gain", k)
+
+    # ln_final.weight -> ln_final.gain  (allow optional prefix too)
+    k = re.sub(fr"{SEP}ln_final\.weight$", r"\1ln_final.gain", k)
+
+    return k
+
+
+def load_reference_state(model, ref_weights: dict[str, torch.Tensor], strict: bool = True):
+    # Build a flat dict with remapped keys; this works across the whole model in one go.
+    # Works with keys like:
+    #   layers.0.attn.q_proj.weight -> layers.0.attn.linear_q.weight
+    #   token_embeddings.weight     -> token_embeddings.weight (unchanged)
+    new_sd = {}
+    for k, v in ref_weights.items():
+        if k == "token_embeddings.weight":
+            k = "token_embeddings.embedding"
+        new_sd[_remap_key(k)] = v
+
+    missing, unexpected = model.load_state_dict(new_sd, strict=strict)
+    if not strict:
+        if missing:
+            print("[load_state_dict] missing:", missing)
+        if unexpected:
+            print("[load_state_dict] unexpected:", unexpected)
+    return model
+
+
 def run_transformer_block(
     d_model: int,
     num_heads: int,
@@ -321,7 +365,11 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    from cs336_basics.model import TransformerBlock
+    transformer_block = TransformerBlock(d_model, num_heads, d_ff, theta, max_seq_len)
+    load_reference_state(transformer_block, weights, strict=True)
+
+    return transformer_block(in_features)
 
 
 def run_transformer_lm(
@@ -403,7 +451,20 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    from cs336_basics.model import TransformerLM
+
+    transformer_lm = TransformerLM(
+        vocab_size=vocab_size,
+        context_length=context_length,
+        d_model=d_model,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        rope_theta=rope_theta,
+    )
+
+    load_reference_state(transformer_lm, weights, strict=True)
+    return transformer_lm(in_indices)
 
 
 def run_rmsnorm(
@@ -504,7 +565,9 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    from cs336_basics.training import cross_entropy
+
+    return cross_entropy(inputs, targets)
 
 
 def run_gradient_clipping(
@@ -518,14 +581,18 @@ def run_gradient_clipping(
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    from cs336_basics.training import grad_clipping
+
+    return grad_clipping(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    from cs336_basics.training import AdamW
+
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
@@ -553,7 +620,10 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise NotImplementedError
+    from cs336_basics.training import cosine_lr_scheduler
+    return cosine_lr_scheduler(
+        it, lr_min=min_learning_rate, lr_max=max_learning_rate,
+        warmup_iters=warmup_iters, cosine_cycle_iters=cosine_cycle_iters)
 
 
 def run_save_checkpoint(

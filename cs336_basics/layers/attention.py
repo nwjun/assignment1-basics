@@ -82,18 +82,19 @@ class MultiheadSelfAttention(nn.Module):
         k = rearrange(k, "b t (h d) -> (b h) t d", h=self.num_heads)
         v = rearrange(v, "b t (h d) -> (b h) t d", h=self.num_heads)
 
-        if hasattr(self, "rope") and token_pos is not None:
-            token_pos = (
-                torch.arange(q.shape[-2], device=x.device)
-                .unsqueeze(0)
-                .expand(q.shape[0], -1)
-            )
+        if hasattr(self, "rope"):
+            if token_pos is None:
+                token_pos = (
+                    torch.arange(q.shape[-2], device=x.device)
+                    .unsqueeze(0)
+                    .expand(q.shape[0], -1)
+                )
             q = self.rope(q, token_pos)
             k = self.rope(k, token_pos)
 
         seq_len = x.shape[1]
         mask = torch.tril(
-            torch.ones((seq_len, seq_len), dtype=torch.bool, device=q.device) 
+            torch.ones((seq_len, seq_len), dtype=torch.bool, device=q.device)
         )
         mask = mask.expand(q.shape[0], -1, -1)  # match batch*num_heads
 
